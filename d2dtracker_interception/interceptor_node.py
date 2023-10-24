@@ -12,7 +12,7 @@ class InterceptorNode(Node):
             'interceptor_input',
             self.listener_callback,
             10)
-        self.subscription  # prevent unused variable warning
+        self.subscription  
 
     def listener_callback(self, msg):
         traj_data = interceptor_trajectory(
@@ -27,8 +27,6 @@ class InterceptorNode(Node):
             traj_msg.points.append(point)
 
         self.publisher_.publish(traj_msg)
-
-# ... (Python functions from the previous code) ...
 
 def main(args=None):
     rclpy.init(args=args)
