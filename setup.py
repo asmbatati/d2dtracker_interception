@@ -13,13 +13,14 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='user',
-    maintainer_email='user@todo.todo',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    maintainer='asmbatati',
+    maintainer_email='asmalbatati@hotmail.com',
+    description='Interceptor Node for ROS 2.',
+    license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'interceptor = d2dtracker_interception.interceptor_node:main'
         ],
     },
 )
