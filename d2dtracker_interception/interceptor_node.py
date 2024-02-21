@@ -1,38 +1,36 @@
 import rclpy
 from rclpy.node import Node
-from interceptor_node.msg import InterceptorInput, Trajectory, Point
+from my_msgs.msg import State
+import numpy as np
 
-class InterceptorNode(Node):
+class OptimalIntersectionPublisher(Node):
 
     def __init__(self):
-        super().__init__('interceptor_node')
-        self.publisher_ = self.create_publisher(Trajectory, 'interceptor_trajectory', 10)
-        self.subscription = self.create_subscription(
-            InterceptorInput,
-            'interceptor_input',
-            self.listener_callback,
-            10)
-        self.subscription  
+        super().__init__('optimal_intersection_publisher')
+        self.publisher_ = self.create_publisher(State, 'optimal_intersection', 10)
+        self.declare_parameter("predicted_target_states", [])
+        self.declare_parameter("interceptor_state", [])
+        timer_period = 2  # seconds
+        self.timer = self.create_timer(timer_period, self.publish_optimal_intersection)
 
-    def listener_callback(self, msg):
-        traj_data = interceptor_trajectory(
-            msg.xtgt, msg.ytgt, msg.ztgt, msg.xint, msg.yint, msg.vint,
-            msg.vmax, msg.amax, msg.φt, msg.dt, msg.mpc_horizon_length
-        )
+    def publish_optimal_intersection(self):
+        predicted_target_states = self.get_parameter("predicted_target_states").value
+        interceptor_state = self.get_parameter("interceptor_state").value
+
+        optimal_state = self.find_optimal_intersection(predicted_target_states, interceptor_state)
         
-        traj_msg = Trajectory()
-        for data in traj_data:
-            point = Point()
-            point.x, point.y, point.z = data
-            traj_msg.points.append(point)
+        msg = State()
+        msg.x, msg.y, msg.z, msg.vx, msg.vy, msg.vz, msg.ax, msg.ay, msg.az = optimal_state
+        
+        self.publisher_.publish(msg)
 
-        self.publisher_.publish(traj_msg)
+    # Your find_optimal_intersection method goes here ...
 
 def main(args=None):
     rclpy.init(args=args)
-    node = InterceptorNode()
-    rclpy.spin(node)
-    node.destroy_node()
+    optimal_intersection_publisher = OptimalIntersectionPublisher()
+    rclpy.spin(optimal_intersection_publisher)
+    optimal_intersection_publisher.destroy_node()
     rclpy.shutdown()
 
 if __name__ == '__main__':

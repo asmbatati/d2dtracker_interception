@@ -15,12 +15,15 @@ setup(
     zip_safe=True,
     maintainer='asmbatati',
     maintainer_email='asmalbatati@hotmail.com',
-    description='Interceptor Node for ROS 2.',
+    description='Interception Strategies for the D2DTracker Project.',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'interceptor = d2dtracker_interception.interceptor_node:main'
+            # 'interceptor = d2dtracker_interception.interceptor_node:main'
         ],
+        # 'rosidl_interfaces': [
+        #     'msg/State.msg'
+        # ],
     },
 )

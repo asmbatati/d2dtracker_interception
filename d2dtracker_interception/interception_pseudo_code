@@ -1,0 +1,5 @@
+1- Get the states of the target and interceptor from the state_estimate_module
+2- Get the predicted trajectory of the target from the trajectory_prediction_module
+3- Find the distance from the interceptor to every point in the predicted trajectory of the target
+4- Select the optimal interception point based on the distance
+5- Give the interception point to the trajectory_generator_module

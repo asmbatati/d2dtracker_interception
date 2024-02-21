@@ -3,9 +3,9 @@
 <package format="3">
   <name>d2dtracker_interception</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="user@todo.todo">user</maintainer>
-  <license>TODO: License declaration</license>
+  <description>Interception Strategies for the D2DTracker Project.</description>
+  <maintainer email="asmalbatati@hotmail.com">asmbatati</maintainer>
+  <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>rclcpp</depend>
@@ -15,6 +15,10 @@
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
+
+  <build_depend>builtin_interfaces</build_depend>
+  <exec_depend>builtin_interfaces</exec_depend>
+
 
   <export>
     <build_type>ament_python</build_type>
