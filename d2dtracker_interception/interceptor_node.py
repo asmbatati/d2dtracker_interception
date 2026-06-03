@@ -39,6 +39,11 @@ class InterceptorNode(Node):
         self.declare_parameter('capture_radius', 1.0)
         self.declare_parameter('frame_id', 'map')
         self.declare_parameter('rate', 10.0)
+        # Spawn offsets: each odom is in its own EKF frame; results are in world.
+        self.declare_parameter('interceptor_spawn', [0.0, 0.0, 0.0])
+        self.declare_parameter('target_spawn', [10.0, 0.0, 0.0])
+        # Is target_predicted_path already in the world frame? (don't offset it)
+        self.declare_parameter('target_path_in_world', True)
 
         self.vmax = self.get_parameter('vmax').value
         self.amax = self.get_parameter('amax').value
@@ -46,6 +51,9 @@ class InterceptorNode(Node):
         self.horizon = int(self.get_parameter('prediction_horizon').value)
         self.capture_radius = self.get_parameter('capture_radius').value
         self.frame_id = self.get_parameter('frame_id').value
+        self.ispawn = list(self.get_parameter('interceptor_spawn').value)
+        self.tspawn = list(self.get_parameter('target_spawn').value)
+        self.path_in_world = self.get_parameter('target_path_in_world').value
 
         self.interceptor_state = None      # [x,y,z,vx,vy,vz,ax,ay,az]
         self.predicted_states = []         # list of 9-vectors
@@ -68,13 +76,17 @@ class InterceptorNode(Node):
     def interceptorOdomCb(self, msg: Odometry):
         p = msg.pose.pose.position
         v = msg.twist.twist.linear
-        self.interceptor_state = [p.x, p.y, p.z, v.x, v.y, v.z, 0.0, 0.0, 0.0]
+        # to world frame (odom + spawn offset)
+        self.interceptor_state = [p.x + self.ispawn[0], p.y + self.ispawn[1],
+                                  p.z + self.ispawn[2], v.x, v.y, v.z, 0.0, 0.0, 0.0]
 
     def targetPathCb(self, msg: Path):
+        off = [0.0, 0.0, 0.0] if self.path_in_world else self.tspawn
         states = []
         for ps in msg.poses:
             p = ps.pose.position
-            states.append([p.x, p.y, p.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            states.append([p.x + off[0], p.y + off[1], p.z + off[2],
+                           0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.predicted_states = states
 
     def targetOdomCb(self, msg: Odometry):
@@ -87,10 +99,12 @@ class InterceptorNode(Node):
             return []
         p = self.target_odom.pose.pose.position
         v = self.target_odom.twist.twist.linear
+        # target odom -> world frame
+        px, py, pz = p.x + self.tspawn[0], p.y + self.tspawn[1], p.z + self.tspawn[2]
         states = []
         for k in range(self.horizon):
             t = k * self.dt
-            states.append([p.x + v.x * t, p.y + v.y * t, p.z + v.z * t,
+            states.append([px + v.x * t, py + v.y * t, pz + v.z * t,
                           v.x, v.y, v.z, 0.0, 0.0, 0.0])
         return states
 

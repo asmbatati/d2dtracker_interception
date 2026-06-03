@@ -10,7 +10,7 @@ import numpy as np
 
 
 def closing_velocity(rel_pos, rel_vel):
-    """Closing speed (>0 means range is decreasing)."""
+    """Return the closing speed (>0 means range is decreasing)."""
     dist = float(np.linalg.norm(rel_pos))
     if dist < 1e-6:
         return 0.0
@@ -27,7 +27,7 @@ def los_rate(rel_pos, rel_vel):
 
 def proportional_navigation(interceptor_pos, interceptor_vel,
                             target_pos, target_vel, N=3.0):
-    """True PN commanded acceleration vector (perpendicular to the LOS).
+    """Return the true-PN commanded acceleration (perpendicular to the LOS).
 
     a_cmd = N * Vc * (omega x los_hat)
     """

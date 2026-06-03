@@ -11,15 +11,14 @@ Topics (relative; launch under the interceptor namespace):
   sub  target_odom                  (nav_msgs/Odometry)  - target state
   pub  mavros/setpoint_raw/local    (mavros_msgs/PositionTarget) - velocity cmd
 """
-import numpy as np
-
 from mavros_msgs.msg import PositionTarget, State
 from mavros_msgs.srv import CommandBool, SetMode
 from nav_msgs.msg import Odometry
+import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import (DurabilityPolicy, HistoryPolicy, QoSProfile,
-                       ReliabilityPolicy, qos_profile_sensor_data)
+from rclpy.qos import (DurabilityPolicy, HistoryPolicy, qos_profile_sensor_data,
+                       QoSProfile, ReliabilityPolicy)
 
 from .guidance import pn_velocity_command
 
@@ -36,6 +35,10 @@ class GuidanceNode(Node):
         self.declare_parameter('takeoff_height', 4.0)
         self.declare_parameter('auto_arm', True)
         self.declare_parameter('rate', 30.0)
+        # Each drone's odom is in its own EKF/spawn frame; add spawn offsets to
+        # compare them in a common (world) frame.
+        self.declare_parameter('interceptor_spawn', [0.0, 0.0, 0.0])
+        self.declare_parameter('target_spawn', [10.0, 0.0, 0.0])
 
         self.N = self.get_parameter('nav_gain').value
         self.vmax = self.get_parameter('vmax').value
@@ -44,6 +47,8 @@ class GuidanceNode(Node):
         self.takeoff_height = self.get_parameter('takeoff_height').value
         self.auto_arm = self.get_parameter('auto_arm').value
         self.dt = 1.0 / max(self.get_parameter('rate').value, 1e-3)
+        self.ispawn = np.array(self.get_parameter('interceptor_spawn').value, dtype=float)
+        self.tspawn = np.array(self.get_parameter('target_spawn').value, dtype=float)
 
         state_qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
                                durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -121,23 +126,27 @@ class GuidanceNode(Node):
             return
         frame_id = self.odom.header.frame_id or 'map'
         p = self.odom.pose.pose.position
-        ipos = [p.x, p.y, p.z]
 
-        # Climb to altitude / hold until a target appears.
+        # Climb to altitude / hold until a target appears (commands are in the
+        # interceptor's local frame, so use raw odom here).
         if self.target is None:
             self._publish_position(p.x, p.y, self.takeoff_height, frame_id)
             return
 
+        # World-frame geometry (odom + spawn offset).
+        ipos = np.array([p.x, p.y, p.z]) + self.ispawn
         v = self.odom.twist.twist.linear
         ivel = [v.x, v.y, v.z]
         tp = self.target.pose.pose.position
         tv = self.target.twist.twist.linear
-        tpos = [tp.x, tp.y, tp.z]
+        tpos = np.array([tp.x, tp.y, tp.z]) + self.tspawn
         tvel = [tv.x, tv.y, tv.z]
 
-        if float(np.linalg.norm(np.array(tpos) - np.array(ipos))) <= self.capture_radius:
+        if float(np.linalg.norm(tpos - ipos)) <= self.capture_radius:
             self.get_logger().info('Target captured (PN).', throttle_duration_sec=2.0)
 
+        # PN velocity is frame-invariant under translation (both ENU); publish
+        # directly in the interceptor's local frame.
         v_cmd = pn_velocity_command(ipos, ivel, tpos, tvel, self.vmax,
                                     N=self.N, dt=self.dt,
                                     closing_speed=self.closing_speed)
