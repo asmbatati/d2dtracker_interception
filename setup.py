@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'interceptor = d2dtracker_interception.interceptor_node:main',
+            'guidance = d2dtracker_interception.guidance_node:main',
         ],
     },
 )
