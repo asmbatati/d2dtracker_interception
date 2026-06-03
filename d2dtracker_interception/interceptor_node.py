@@ -1,37 +1,157 @@
+#!/usr/bin/env python3
+"""Interception strategy node.
+
+Subscribes to the interceptor's odometry and the target's predicted path (or,
+as a fallback, the target's odometry from which a constant-velocity prediction
+is built), computes the optimal rendezvous point with
+:func:`find_optimal_intersection`, and publishes:
+
+  * ``~/intercept_point`` (geometry_msgs/PoseStamped) - the rendezvous point.
+  * ``~/interception_path`` (nav_msgs/Path) - an acceleration-limited path from
+    the interceptor toward the rendezvous, consumable by a tracking controller
+    or the d2dtracker_states FSM/Behaviour-Tree.
+
+Uses only standard messages so the package stays pure ``ament_python`` (no
+custom rosidl generation, which ament_python cannot do).
+"""
+import math
+
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry, Path
 import rclpy
 from rclpy.node import Node
-from my_msgs.msg import State
-import numpy as np
+from rclpy.qos import qos_profile_sensor_data
 
-class OptimalIntersectionPublisher(Node):
+from .interception_modes import interceptor_trajectory
+from .interception_point import find_optimal_intersection
+
+
+class InterceptorNode(Node):
+    """Compute and publish the optimal interception point and path."""
 
     def __init__(self):
-        super().__init__('optimal_intersection_publisher')
-        self.publisher_ = self.create_publisher(State, 'optimal_intersection', 10)
-        self.declare_parameter("predicted_target_states", [])
-        self.declare_parameter("interceptor_state", [])
-        timer_period = 2  # seconds
-        self.timer = self.create_timer(timer_period, self.publish_optimal_intersection)
+        super().__init__('interceptor_node')
 
-    def publish_optimal_intersection(self):
-        predicted_target_states = self.get_parameter("predicted_target_states").value
-        interceptor_state = self.get_parameter("interceptor_state").value
+        self.declare_parameter('vmax', 8.0)
+        self.declare_parameter('amax', 4.0)
+        self.declare_parameter('prediction_dt', 0.1)
+        self.declare_parameter('prediction_horizon', 30)  # samples for the fallback
+        self.declare_parameter('capture_radius', 1.0)
+        self.declare_parameter('frame_id', 'map')
+        self.declare_parameter('rate', 10.0)
 
-        optimal_state = self.find_optimal_intersection(predicted_target_states, interceptor_state)
-        
-        msg = State()
-        msg.x, msg.y, msg.z, msg.vx, msg.vy, msg.vz, msg.ax, msg.ay, msg.az = optimal_state
-        
-        self.publisher_.publish(msg)
+        self.vmax = self.get_parameter('vmax').value
+        self.amax = self.get_parameter('amax').value
+        self.dt = self.get_parameter('prediction_dt').value
+        self.horizon = int(self.get_parameter('prediction_horizon').value)
+        self.capture_radius = self.get_parameter('capture_radius').value
+        self.frame_id = self.get_parameter('frame_id').value
 
-    # Your find_optimal_intersection method goes here ...
+        self.interceptor_state = None      # [x,y,z,vx,vy,vz,ax,ay,az]
+        self.predicted_states = []         # list of 9-vectors
+        self.target_odom = None
+
+        self.create_subscription(Odometry, 'interceptor_odom',
+                                 self.interceptorOdomCb, qos_profile_sensor_data)
+        self.create_subscription(Path, 'target_predicted_path',
+                                 self.targetPathCb, 10)
+        self.create_subscription(Odometry, 'target_odom',
+                                 self.targetOdomCb, qos_profile_sensor_data)
+
+        self.point_pub = self.create_publisher(PoseStamped, 'intercept_point', 10)
+        self.path_pub = self.create_publisher(Path, 'interception_path', 10)
+
+        period = 1.0 / max(self.get_parameter('rate').value, 1e-3)
+        self.create_timer(period, self.update)
+
+    # --- callbacks ---------------------------------------------------------
+    def interceptorOdomCb(self, msg: Odometry):
+        p = msg.pose.pose.position
+        v = msg.twist.twist.linear
+        self.interceptor_state = [p.x, p.y, p.z, v.x, v.y, v.z, 0.0, 0.0, 0.0]
+
+    def targetPathCb(self, msg: Path):
+        states = []
+        for ps in msg.poses:
+            p = ps.pose.position
+            states.append([p.x, p.y, p.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.predicted_states = states
+
+    def targetOdomCb(self, msg: Odometry):
+        self.target_odom = msg
+
+    # --- helpers -----------------------------------------------------------
+    def _constant_velocity_prediction(self):
+        """Build a predicted target path from target odom (constant velocity)."""
+        if self.target_odom is None:
+            return []
+        p = self.target_odom.pose.pose.position
+        v = self.target_odom.twist.twist.linear
+        states = []
+        for k in range(self.horizon):
+            t = k * self.dt
+            states.append([p.x + v.x * t, p.y + v.y * t, p.z + v.z * t,
+                          v.x, v.y, v.z, 0.0, 0.0, 0.0])
+        return states
+
+    # --- main loop ---------------------------------------------------------
+    def update(self):
+        if self.interceptor_state is None:
+            return
+
+        predicted = self.predicted_states or self._constant_velocity_prediction()
+        if not predicted:
+            return
+
+        state, idx = find_optimal_intersection(
+            predicted, self.interceptor_state, self.dt, self.vmax, self.amax)
+        if state is None:
+            return
+
+        stamp = self.get_clock().now().to_msg()
+
+        point = PoseStamped()
+        point.header.stamp = stamp
+        point.header.frame_id = self.frame_id
+        point.pose.position.x = float(state[0])
+        point.pose.position.y = float(state[1])
+        point.pose.position.z = float(state[2])
+        point.pose.orientation.w = 1.0
+        self.point_pub.publish(point)
+
+        # Acceleration-limited straight-line trajectory toward the rendezvous.
+        xi, yi, zi = self.interceptor_state[0:3]
+        vxi, vyi, vzi = self.interceptor_state[3:6]
+        speed = math.sqrt(vxi * vxi + vyi * vyi + vzi * vzi)
+        traj = interceptor_trajectory(
+            state[0], state[1], state[2], xi, yi, speed,
+            self.vmax, self.amax, self.dt, max(idx, 1))
+
+        path = Path()
+        path.header.stamp = stamp
+        path.header.frame_id = self.frame_id
+        for (x, y, z) in traj:
+            ps = PoseStamped()
+            ps.header = path.header
+            ps.pose.position.x = float(x)
+            ps.pose.position.y = float(y)
+            ps.pose.position.z = float(z)
+            ps.pose.orientation.w = 1.0
+            path.poses.append(ps)
+        self.path_pub.publish(path)
+
 
 def main(args=None):
     rclpy.init(args=args)
-    optimal_intersection_publisher = OptimalIntersectionPublisher()
-    rclpy.spin(optimal_intersection_publisher)
-    optimal_intersection_publisher.destroy_node()
-    rclpy.shutdown()
+    node = InterceptorNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
