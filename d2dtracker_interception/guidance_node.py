@@ -8,6 +8,11 @@ OFFBOARD, climbs to ``takeoff_height`` and only then engages with PN (like the
 other mission heads, which take off before pursuing; with ``climb_first`` false
 it engages from the ground as soon as a target is seen).
 
+With ``cbf`` true the engaged velocity command passes through a CBF safety
+filter (``safety.CBFVelocityFilter``): altitude floor ``cbf_z_min``, optional
+ceiling ``cbf_z_max`` and geofence ``cbf_fence_radius`` around the world origin
+(0 disables those two), barrier gain ``cbf_alpha``.
+
 Topics (relative; launch under the interceptor namespace):
   sub  mavros/local_position/odom   (nav_msgs/Odometry)  - interceptor state
   sub  target_odom                  (nav_msgs/Odometry)  - target state
@@ -24,6 +29,7 @@ from rclpy.qos import (DurabilityPolicy, HistoryPolicy, qos_profile_sensor_data,
 
 from .frames import odom_velocity_world
 from .guidance import pn_velocity_command, pursuit_velocity_command
+from .safety import CBFVelocityFilter
 
 
 class GuidanceNode(Node):
@@ -40,6 +46,11 @@ class GuidanceNode(Node):
         self.declare_parameter('auto_arm', True)
         self.declare_parameter('climb_first', True)
         self.declare_parameter('rate', 30.0)
+        self.declare_parameter('cbf', False)
+        self.declare_parameter('cbf_z_min', 1.5)
+        self.declare_parameter('cbf_z_max', 0.0)          # 0 = no ceiling
+        self.declare_parameter('cbf_fence_radius', 0.0)   # 0 = no geofence
+        self.declare_parameter('cbf_alpha', 1.0)
         # Each drone's odom is in its own EKF/spawn frame; add spawn offsets to
         # compare them in a common (world) frame.
         self.declare_parameter('interceptor_spawn', [0.0, 0.0, 0.0])
@@ -59,6 +70,15 @@ class GuidanceNode(Node):
         self.dt = 1.0 / max(self.get_parameter('rate').value, 1e-3)
         self.ispawn = np.array(self.get_parameter('interceptor_spawn').value, dtype=float)
         self.tspawn = np.array(self.get_parameter('target_spawn').value, dtype=float)
+        self.cbf = None
+        if self.get_parameter('cbf').value:
+            z_max = float(self.get_parameter('cbf_z_max').value)
+            fence = float(self.get_parameter('cbf_fence_radius').value)
+            self.cbf = CBFVelocityFilter(
+                z_min=self.get_parameter('cbf_z_min').value,
+                z_max=z_max if z_max > 0.0 else float('inf'),
+                fence_radius=fence if fence > 0.0 else float('inf'),
+                alpha=self.get_parameter('cbf_alpha').value, vmax=self.vmax)
 
         state_qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
                                durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -169,6 +189,8 @@ class GuidanceNode(Node):
             v_cmd = pn_velocity_command(ipos, ivel, tpos, tvel, self.vmax,
                                         N=self.N, dt=self.dt,
                                         closing_speed=self.closing_speed)
+        if self.cbf is not None:
+            v_cmd, _ = self.cbf.apply(ipos, v_cmd)
         self._publish_velocity(v_cmd[0], v_cmd[1], v_cmd[2], frame_id)
 
 
