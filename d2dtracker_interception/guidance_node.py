@@ -28,7 +28,8 @@ from rclpy.qos import (DurabilityPolicy, HistoryPolicy, qos_profile_sensor_data,
                        QoSProfile, ReliabilityPolicy)
 
 from .frames import odom_velocity_world
-from .guidance import pn_velocity_command, pursuit_velocity_command
+from .guidance import (pn_integrated_velocity, pn_velocity_command,
+                       pursuit_velocity_command)
 from .safety import CBFVelocityFilter
 
 
@@ -37,7 +38,7 @@ class GuidanceNode(Node):
 
     def __init__(self):
         super().__init__('guidance_node')
-        self.declare_parameter('law', 'pn')            # pn | pursuit
+        self.declare_parameter('law', 'pn')            # pn | pn_int | pursuit
         self.declare_parameter('nav_gain', 3.0)        # PN constant N
         self.declare_parameter('vmax', 8.0)
         self.declare_parameter('closing_speed', 6.0)
@@ -57,8 +58,9 @@ class GuidanceNode(Node):
         self.declare_parameter('target_spawn', [10.0, 0.0, 0.0])
 
         self.law = self.get_parameter('law').value
-        if self.law not in ('pn', 'pursuit'):
-            raise ValueError(f"law must be 'pn' or 'pursuit', got {self.law!r}")
+        if self.law not in ('pn', 'pn_int', 'pursuit'):
+            raise ValueError(f"law must be 'pn', 'pn_int' or 'pursuit', got {self.law!r}")
+        self.v_cmd = None   # pn_int: last commanded velocity
         self.N = self.get_parameter('nav_gain').value
         self.vmax = self.get_parameter('vmax').value
         self.closing_speed = self.get_parameter('closing_speed').value
@@ -185,6 +187,10 @@ class GuidanceNode(Node):
         # directly in the interceptor's local frame.
         if self.law == 'pursuit':
             v_cmd = pursuit_velocity_command(ipos, tpos, self.closing_speed)
+        elif self.law == 'pn_int':
+            v_cmd = pn_integrated_velocity(self.v_cmd, ipos, ivel, tpos, tvel,
+                                           self.closing_speed, N=self.N, dt=self.dt)
+            self.v_cmd = v_cmd
         else:
             v_cmd = pn_velocity_command(ipos, ivel, tpos, tvel, self.vmax,
                                         N=self.N, dt=self.dt,

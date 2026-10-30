@@ -14,8 +14,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('namespace', default_value='interceptor'),
         DeclareLaunchArgument('law', default_value='pn',
-                              description="'pn' (proportional navigation) or "
-                                          "'pursuit' (fly the line of sight)"),
+                              description="'pn' (PN on the measured velocity, as in "
+                                          "June 2026), 'pn_int' (constant-speed PN "
+                                          "integrated on the command) or 'pursuit'"),
         DeclareLaunchArgument('nav_gain', default_value='3.0'),
         DeclareLaunchArgument('closing_speed', default_value='6.0'),
         DeclareLaunchArgument('cbf', default_value='false',

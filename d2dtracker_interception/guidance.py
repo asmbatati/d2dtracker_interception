@@ -76,3 +76,26 @@ def pursuit_velocity_command(interceptor_pos, target_pos, speed):
     if dist < 1e-6:
         return np.zeros(3)
     return speed * rel_pos / dist
+
+
+def pn_integrated_velocity(v_cmd_prev, interceptor_pos, interceptor_vel,
+                           target_pos, target_vel, speed, N=3.0, dt=0.1):
+    """Constant-speed PN for a velocity-controlled multirotor.
+
+    The PN acceleration (from the measured relative state) turns the
+    previously COMMANDED velocity, whose magnitude is held at ``speed``:
+    ``v <- speed * unit(v_prev + a_PN * dt)``. Starts on the line of sight.
+    Integrating on the command, not on the measured velocity, keeps the
+    lateral correction from being swamped by the autopilot's tracking lag.
+    """
+    rel_pos = np.asarray(target_pos, float) - np.asarray(interceptor_pos, float)
+    dist = float(np.linalg.norm(rel_pos))
+    if dist < 1e-6:
+        return np.zeros(3)
+    if v_cmd_prev is None or float(np.linalg.norm(v_cmd_prev)) < 1e-6:
+        return speed * rel_pos / dist
+    a_cmd = proportional_navigation(interceptor_pos, interceptor_vel,
+                                    target_pos, target_vel, N)
+    v = np.asarray(v_cmd_prev, float) + a_cmd * dt
+    n = float(np.linalg.norm(v))
+    return speed * v / n if n > 1e-9 else speed * rel_pos / dist

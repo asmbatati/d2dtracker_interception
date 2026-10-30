@@ -55,3 +55,36 @@ def test_pursuit_flies_line_of_sight_at_speed():
     from d2dtracker_interception.guidance import pursuit_velocity_command
     v = pursuit_velocity_command([0.0, 0.0, 0.0], [3.0, 4.0, 0.0], speed=5.0)
     assert np.allclose(v, [3.0, 4.0, 0.0])
+
+
+def _engage(law, target_vel, steps=600, dt=0.02, speed=6.0):
+    """Kinematic engagement (perfect velocity tracking); returns min range."""
+    from d2dtracker_interception.guidance import (pn_integrated_velocity,
+                                                  pursuit_velocity_command)
+    ip, tp = np.zeros(3), np.array([20.0, -10.0, 0.0])
+    tv = np.asarray(target_vel, float)
+    v = None
+    best = np.inf
+    for _ in range(steps):
+        if law == 'pn_int':
+            v = pn_integrated_velocity(v, ip, v if v is not None else np.zeros(3),
+                                       tp, tv, speed, N=3.0, dt=dt)
+        else:
+            v = pursuit_velocity_command(ip, tp, speed)
+        ip, tp = ip + v * dt, tp + tv * dt
+        best = min(best, float(np.linalg.norm(tp - ip)))
+    return best
+
+
+def test_integrated_pn_hits_a_crossing_target():
+    assert _engage('pn_int', [0.0, 2.4, 0.0]) < 0.3
+
+
+def test_integrated_pn_flies_straighter_than_pursuit():
+    # same speed, crossing target: PN leads the target, pursuit tail-chases;
+    # both close, PN by a collision course that needs no terminal turn
+    from d2dtracker_interception.guidance import pn_integrated_velocity
+    v = pn_integrated_velocity(None, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0],
+                               [10.0, 0.0, 0.0], [0.0, 2.0, 0.0], 6.0)
+    assert np.allclose(np.linalg.norm(v), 6.0)
+    assert _engage('pursuit', [0.0, 2.4, 0.0]) < 1.0
