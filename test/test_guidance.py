@@ -49,3 +49,9 @@ def test_pn_velocity_points_toward_stationary_target_and_capped():
 def test_pn_velocity_zero_distance():
     v = pn_velocity_command([1, 1, 1], [0, 0, 0], [1, 1, 1], [0, 0, 0], vmax=8.0)
     assert np.linalg.norm(v) == 0.0
+
+
+def test_pursuit_flies_line_of_sight_at_speed():
+    from d2dtracker_interception.guidance import pursuit_velocity_command
+    v = pursuit_velocity_command([0.0, 0.0, 0.0], [3.0, 4.0, 0.0], speed=5.0)
+    assert np.allclose(v, [3.0, 4.0, 0.0])

@@ -67,3 +67,12 @@ def pn_velocity_command(interceptor_pos, interceptor_vel, target_pos, target_vel
     if n > vmax and n > 0.0:
         v_cmd = v_cmd * (vmax / n)
     return v_cmd
+
+
+def pursuit_velocity_command(interceptor_pos, target_pos, speed):
+    """Pure pursuit: fly the line of sight to the target at ``speed``."""
+    rel_pos = np.asarray(target_pos, float) - np.asarray(interceptor_pos, float)
+    dist = float(np.linalg.norm(rel_pos))
+    if dist < 1e-6:
+        return np.zeros(3)
+    return speed * rel_pos / dist
