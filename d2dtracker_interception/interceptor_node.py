@@ -22,6 +22,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
+from .frames import odom_velocity_world
 from .interception_modes import interceptor_trajectory
 from .interception_point import find_optimal_intersection
 
@@ -75,10 +76,10 @@ class InterceptorNode(Node):
     # --- callbacks ---------------------------------------------------------
     def interceptorOdomCb(self, msg: Odometry):
         p = msg.pose.pose.position
-        v = msg.twist.twist.linear
+        vx, vy, vz = odom_velocity_world(msg)   # odom twist is body-frame
         # to world frame (odom + spawn offset)
         self.interceptor_state = [p.x + self.ispawn[0], p.y + self.ispawn[1],
-                                  p.z + self.ispawn[2], v.x, v.y, v.z, 0.0, 0.0, 0.0]
+                                  p.z + self.ispawn[2], vx, vy, vz, 0.0, 0.0, 0.0]
 
     def targetPathCb(self, msg: Path):
         off = [0.0, 0.0, 0.0] if self.path_in_world else self.tspawn
@@ -98,14 +99,14 @@ class InterceptorNode(Node):
         if self.target_odom is None:
             return []
         p = self.target_odom.pose.pose.position
-        v = self.target_odom.twist.twist.linear
+        vx, vy, vz = odom_velocity_world(self.target_odom)   # body -> world
         # target odom -> world frame
         px, py, pz = p.x + self.tspawn[0], p.y + self.tspawn[1], p.z + self.tspawn[2]
         states = []
         for k in range(self.horizon):
             t = k * self.dt
-            states.append([px + v.x * t, py + v.y * t, pz + v.z * t,
-                          v.x, v.y, v.z, 0.0, 0.0, 0.0])
+            states.append([px + vx * t, py + vy * t, pz + vz * t,
+                          vx, vy, vz, 0.0, 0.0, 0.0])
         return states
 
     # --- main loop ---------------------------------------------------------

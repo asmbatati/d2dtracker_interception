@@ -3,8 +3,10 @@
 
 Flies the interceptor straight onto the target using PN velocity setpoints. This
 is an alternative to the Behaviour-Tree / FSM / RL controllers - run ONE of them
-at a time, since they all command the same FCU. The node self-arms and switches
-to OFFBOARD once a target is seen.
+at a time, since they all command the same FCU. The node self-arms, switches to
+OFFBOARD, climbs to ``takeoff_height`` and only then engages with PN (like the
+other mission heads, which take off before pursuing; with ``climb_first`` false
+it engages from the ground as soon as a target is seen).
 
 Topics (relative; launch under the interceptor namespace):
   sub  mavros/local_position/odom   (nav_msgs/Odometry)  - interceptor state
@@ -20,7 +22,8 @@ from rclpy.node import Node
 from rclpy.qos import (DurabilityPolicy, HistoryPolicy, qos_profile_sensor_data,
                        QoSProfile, ReliabilityPolicy)
 
-from .guidance import pn_velocity_command
+from .frames import odom_velocity_world
+from .guidance import pn_velocity_command, pursuit_velocity_command
 
 
 class GuidanceNode(Node):
@@ -28,24 +31,31 @@ class GuidanceNode(Node):
 
     def __init__(self):
         super().__init__('guidance_node')
+        self.declare_parameter('law', 'pn')            # pn | pursuit
         self.declare_parameter('nav_gain', 3.0)        # PN constant N
         self.declare_parameter('vmax', 8.0)
         self.declare_parameter('closing_speed', 6.0)
         self.declare_parameter('capture_radius', 1.0)
         self.declare_parameter('takeoff_height', 4.0)
         self.declare_parameter('auto_arm', True)
+        self.declare_parameter('climb_first', True)
         self.declare_parameter('rate', 30.0)
         # Each drone's odom is in its own EKF/spawn frame; add spawn offsets to
         # compare them in a common (world) frame.
         self.declare_parameter('interceptor_spawn', [0.0, 0.0, 0.0])
         self.declare_parameter('target_spawn', [10.0, 0.0, 0.0])
 
+        self.law = self.get_parameter('law').value
+        if self.law not in ('pn', 'pursuit'):
+            raise ValueError(f"law must be 'pn' or 'pursuit', got {self.law!r}")
         self.N = self.get_parameter('nav_gain').value
         self.vmax = self.get_parameter('vmax').value
         self.closing_speed = self.get_parameter('closing_speed').value
         self.capture_radius = self.get_parameter('capture_radius').value
         self.takeoff_height = self.get_parameter('takeoff_height').value
         self.auto_arm = self.get_parameter('auto_arm').value
+        self.engaged = not self.get_parameter('climb_first').value
+        self.climb_xy = None
         self.dt = 1.0 / max(self.get_parameter('rate').value, 1e-3)
         self.ispawn = np.array(self.get_parameter('interceptor_spawn').value, dtype=float)
         self.tspawn = np.array(self.get_parameter('target_spawn').value, dtype=float)
@@ -127,29 +137,38 @@ class GuidanceNode(Node):
         frame_id = self.odom.header.frame_id or 'map'
         p = self.odom.pose.pose.position
 
-        # Climb to altitude / hold until a target appears (commands are in the
-        # interceptor's local frame, so use raw odom here).
-        if self.target is None:
-            self._publish_position(p.x, p.y, self.takeoff_height, frame_id)
+        # Climb to altitude / hold until a target appears and the climb is done
+        # (commands are in the interceptor's local frame, so use raw odom here).
+        if self.target is None or not self.engaged:
+            if self.climb_xy is None:
+                self.climb_xy = (p.x, p.y)
+            self._publish_position(self.climb_xy[0], self.climb_xy[1],
+                                   self.takeoff_height, frame_id)
+            if (self.target is not None and self.state.armed
+                    and p.z >= 0.9 * self.takeoff_height):
+                self.engaged = True
+                self.get_logger().info('PN engaged at %.1f m' % p.z)
             return
 
         # World-frame geometry (odom + spawn offset).
         ipos = np.array([p.x, p.y, p.z]) + self.ispawn
-        v = self.odom.twist.twist.linear
-        ivel = [v.x, v.y, v.z]
+        # odom twist is body-frame: rotate to world before PN uses it
+        ivel = odom_velocity_world(self.odom)
         tp = self.target.pose.pose.position
-        tv = self.target.twist.twist.linear
         tpos = np.array([tp.x, tp.y, tp.z]) + self.tspawn
-        tvel = [tv.x, tv.y, tv.z]
+        tvel = odom_velocity_world(self.target)
 
         if float(np.linalg.norm(tpos - ipos)) <= self.capture_radius:
             self.get_logger().info('Target captured (PN).', throttle_duration_sec=2.0)
 
         # PN velocity is frame-invariant under translation (both ENU); publish
         # directly in the interceptor's local frame.
-        v_cmd = pn_velocity_command(ipos, ivel, tpos, tvel, self.vmax,
-                                    N=self.N, dt=self.dt,
-                                    closing_speed=self.closing_speed)
+        if self.law == 'pursuit':
+            v_cmd = pursuit_velocity_command(ipos, tpos, self.closing_speed)
+        else:
+            v_cmd = pn_velocity_command(ipos, ivel, tpos, tvel, self.vmax,
+                                        N=self.N, dt=self.dt,
+                                        closing_speed=self.closing_speed)
         self._publish_velocity(v_cmd[0], v_cmd[1], v_cmd[2], frame_id)
 
 
