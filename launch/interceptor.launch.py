@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Launch the interception strategy node.
 
-Remaps its generic I/O onto the interceptor/target namespaces. By default it
-consumes the target's predicted path; if that topic is silent it falls back to
-a constant-velocity prediction from the target odometry.
+Runs in the interceptor namespace (so it publishes
+``/interceptor/intercept_point``, the topic the Behaviour Tree reads) and remaps
+its inputs onto the interceptor/target odometry. It consumes the target's
+predicted path when one is published; nothing publishes the default
+``/target/predicted_path`` in this workspace, so it normally uses its
+constant-velocity prediction from the target odometry.
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -13,6 +16,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     return LaunchDescription([
+        DeclareLaunchArgument('namespace', default_value='interceptor'),
         DeclareLaunchArgument(
             'interceptor_odom',
             default_value='/interceptor/mavros/local_position/odom'),
@@ -26,6 +30,7 @@ def generate_launch_description():
             package='d2dtracker_interception',
             executable='interceptor',
             name='interceptor_node',
+            namespace=LaunchConfiguration('namespace'),
             output='screen',
             parameters=[{
                 'vmax': LaunchConfiguration('vmax'),
