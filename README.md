@@ -72,13 +72,15 @@ Until it engages, it sends a position setpoint at its first x/y and
 `takeoff_height`. With `climb_first` it engages once a target odom has arrived,
 the vehicle is armed and altitude >= 0.9 * `takeoff_height`; with
 `climb_first` false it engages as soon as a target odom arrives. Engaged, it
-sends PN velocity setpoints with yaw along the velocity, using world-frame
-velocities of both drones. With `auto_arm`, a 1 s timer requests OFFBOARD,
+sends velocity setpoints with yaw along the velocity, using world-frame
+velocities of both drones: the PN law (`law:=pn`) or pure pursuit
+(`law:=pursuit`, the line of sight at `closing_speed`). With `auto_arm`, a 1 s timer requests OFFBOARD,
 then arming, once the loop has run 50 times. Reaching `capture_radius` only
 logs a message.
 
 | Parameter | Default |
 |---|---|
+| `law` | `pn` (`pn` or `pursuit`) |
 | `nav_gain` | `3.0` (PN constant N) |
 | `vmax` | `8.0` |
 | `closing_speed` | `6.0` |
@@ -136,17 +138,15 @@ ros2 launch drone_interception_sim pipeline.launch.py planner:=head_on
 
 ## Tests
 
-`test/test_interception.py` (7 tests) and `test/test_guidance.py` (7 tests)
-cover the library without a ROS runtime. `test/` also has the
-copyright/flake8/pep257 lint tests and `test/test_frames.py` for `frames.py`.
+`test/test_interception.py` (7 tests), `test/test_guidance.py` (8 tests) and
+`test/test_frames.py` (3 tests) cover the library without a ROS runtime.
+`test/` also has the copyright/flake8/pep257 lint tests.
 
 ```bash
 cd ~/drone_interception_ws/ros2_ws/src/d2dtracker_interception
 python3 -m pytest test
 ```
 
-Measured result for the interception, guidance and lint tests: 14 passed,
-1 skipped, 2 failed. The skip is the copyright test (marked skip). The 2
-failures are lint, not functional: flake8 (I100 import order in `setup.py`)
-and pep257 (D213 docstring style). `test_frames.py` is a new, uncommitted
-file and is not part of that count.
+Measured on 30 Oct 2026: 18 passed, 1 skipped, 2 failed. The skip is the
+copyright test (marked skip). The 2 failures are lint, not functional: flake8
+(I100 import order in `setup.py`) and pep257 (D213 docstring style).
